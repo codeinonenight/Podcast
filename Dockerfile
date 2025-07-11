@@ -22,20 +22,24 @@ RUN pip3 install --no-cache-dir \
     beautifulsoup4 \
     requests
 
-# Set working directory
+# Dependencies stage
+FROM base AS deps
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
+RUN npm ci
 
-# Install Node.js dependencies
-RUN npm ci --only=production && npm cache clean --force
-
-# Copy source code
+# Build stage
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build the Next.js application
 RUN npm run build
+
+# Production stage
+FROM base AS runner
+WORKDIR /app
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs
@@ -44,10 +48,10 @@ RUN adduser -S nextjs -u 1001
 # Create temp directory for audio processing
 RUN mkdir -p /tmp/audio_processing && chown -R nextjs:nodejs /tmp/audio_processing
 
-# Copy built application
-COPY --from=base --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=base --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=base --chown=nextjs:nodejs /app/public ./public
+# Copy built application from builder stage
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # Set user
 USER nextjs
