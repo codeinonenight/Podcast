@@ -1,0 +1,98 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model PodcastSession {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Input data
+  originalUrl String
+  platform    String
+  
+  // Processing status
+  status      ProcessingStatus @default(PENDING)
+  currentStep String?
+  progress    Int              @default(0)
+  error       String?
+  
+  // Extracted data
+  audioUrl    String?
+  audioSize   Int?
+  audioDuration Float?
+  audioFormat String?
+  
+  // Metadata
+  title       String?
+  description String?
+  author      String?
+  publishDate DateTime?
+  thumbnail   String?
+  duration    Float?
+  chapters    Json?
+  
+  // Analysis results
+  transcription String?
+  transcriptionLanguage String?
+  transcriptionConfidence Float?
+  
+  summary     String?
+  topics      Json?
+  mindmap     Json?
+  insights    Json?
+  
+  // Chat sessions
+  chatSessions ChatSession[]
+  
+  @@map("podcast_sessions")
+}
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  podcastSessionId String
+  podcastSession   PodcastSession @relation(fields: [podcastSessionId], references: [id], onDelete: Cascade)
+  
+  messages Json[]
+  
+  @@map("chat_sessions")
+}
+
+enum ProcessingStatus {
+  PENDING
+  EXTRACTING_AUDIO
+  TRANSCRIBING
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+model ProcessingJob {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  sessionId   String   @unique
+  status      ProcessingStatus @default(PENDING)
+  currentStep String?
+  progress    Int      @default(0)
+  error       String?
+  
+  // Job metadata
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int? // in seconds
+  
+  @@map("processing_jobs")
+} 
