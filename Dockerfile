@@ -15,8 +15,8 @@ RUN apk add --no-cache \
 ENV CHROME_BIN=/usr/bin/chromium-browser
 ENV CHROME_PATH=/usr/bin/chromium-browser
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir \
+# Install Python dependencies with --break-system-packages flag
+RUN pip3 install --break-system-packages --no-cache-dir \
     yt-dlp \
     selenium \
     beautifulsoup4 \
