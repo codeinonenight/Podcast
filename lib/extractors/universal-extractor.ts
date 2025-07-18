@@ -39,6 +39,10 @@ export interface ExtractionResult {
   fileSize?: number
 }
 
+// Check if we should use mock mode - disable for local development with real processing
+const USE_MOCK_EXTRACTOR = process.env.USE_MOCK_EXTRACTOR === 'true'
+console.log('🔧 Universal Extractor: USE_MOCK_EXTRACTOR =', USE_MOCK_EXTRACTOR, 'env value:', process.env.USE_MOCK_EXTRACTOR)
+
 export class UniversalExtractor {
   private tempDir: string
   private onProgress?: (progress: ExtractorProgress) => void
@@ -59,6 +63,11 @@ export class UniversalExtractor {
   }
 
   async extractAudio(url: string, platform: PlatformInfo): Promise<ExtractionResult> {
+    if (USE_MOCK_EXTRACTOR) {
+      console.log('🔧 Mock Extractor: Simulating audio extraction for', url)
+      return await this.mockExtractAudio(url, platform)
+    }
+
     try {
       const sessionId = this.generateSessionId()
       const outputPath = path.join(this.tempDir, `${sessionId}.%(ext)s`)
@@ -72,6 +81,60 @@ export class UniversalExtractor {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown extraction error'
       }
+    }
+  }
+
+  private async mockExtractAudio(url: string, platform: PlatformInfo): Promise<ExtractionResult> {
+    // Simulate extraction process with progress updates
+    const stages: ExtractorProgress[] = [
+      { stage: 'downloading', percentage: 0 },
+      { stage: 'downloading', percentage: 25, speed: '2.5MB/s', eta: '00:30' },
+      { stage: 'downloading', percentage: 50, speed: '2.3MB/s', eta: '00:15' },
+      { stage: 'downloading', percentage: 75, speed: '2.1MB/s', eta: '00:08' },
+      { stage: 'downloading', percentage: 100 },
+      { stage: 'extracting', percentage: 0 },
+      { stage: 'extracting', percentage: 50 },
+      { stage: 'converting', percentage: 0 },
+      { stage: 'converting', percentage: 100 },
+      { stage: 'complete', percentage: 100 }
+    ]
+
+    for (const stage of stages) {
+      if (this.onProgress) {
+        this.onProgress(stage)
+      }
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+
+    // Generate mock metadata based on platform
+    const mockMetadata: AudioMetadata = {
+      title: `Mock ${platform.name} Audio - ${new Date().toISOString()}`,
+      description: `This is a mock audio file for testing purposes. Original URL: ${url}`,
+      author: `Mock ${platform.name} Creator`,
+      uploader: `Mock ${platform.name} Channel`,
+      uploadDate: new Date().toISOString().split('T')[0],
+      duration: 1800, // 30 minutes
+      view_count: Math.floor(Math.random() * 1000000),
+      thumbnail: `https://via.placeholder.com/480x360.png?text=Mock+${platform.name}+Thumbnail`,
+      webpage_url: url,
+      format: 'mp3',
+      filesize: 25600000, // ~25MB
+      chapters: [
+        { title: 'Introduction', start_time: 0, end_time: 300 },
+        { title: 'Main Content', start_time: 300, end_time: 1500 },
+        { title: 'Conclusion', start_time: 1500, end_time: 1800 }
+      ]
+    }
+
+    console.log('🔧 Mock Extractor: Generated mock metadata', mockMetadata.title)
+
+    return {
+      success: true,
+      audioPath: '/mock/audio/path.mp3',
+      metadata: mockMetadata,
+      duration: mockMetadata.duration,
+      fileSize: mockMetadata.filesize
     }
   }
 
@@ -95,7 +158,7 @@ export class UniversalExtractor {
     switch (platform.extractorType) {
       case 'yt-dlp':
         if (platform.name === 'YouTube') {
-          baseArgs.push('--write-auto-sub', '--write-sub', '--sub-lang', 'en')
+          baseArgs.push('--write-auto-sub', '--write-sub', '--sub-lang', 'en', '--ignore-errors')
         }
         if (platform.name === 'Spotify') {
           baseArgs.push('--cookies-from-browser', 'chrome')
@@ -118,6 +181,15 @@ export class UniversalExtractor {
     return new Promise((resolve) => {
       const ytdlpPath = process.env.YTDLP_PATH || 'yt-dlp'
       const childProcess = spawn(ytdlpPath, args)
+      
+      // Set a timeout to prevent hanging (10 minutes)
+      const timeoutId = setTimeout(() => {
+        childProcess.kill('SIGTERM')
+        resolve({
+          success: false,
+          error: 'Extraction timed out after 10 minutes'
+        })
+      }, 10 * 60 * 1000)
       
       let output = ''
       let errorOutput = ''
@@ -143,6 +215,8 @@ export class UniversalExtractor {
       })
 
       childProcess.on('close', async (code: number) => {
+        clearTimeout(timeoutId)
+        
         if (code === 0) {
           try {
             // Find the extracted files
@@ -171,6 +245,7 @@ export class UniversalExtractor {
       })
 
       childProcess.on('error', (error: Error) => {
+        clearTimeout(timeoutId)
         resolve({
           success: false,
           error: `Failed to spawn yt-dlp: ${error.message}`

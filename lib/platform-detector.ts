@@ -66,6 +66,14 @@ const platformPatterns: { [key: string]: PlatformInfo } = {
     extractorType: 'selenium',
     supportedFeatures: ['audio', 'metadata', 'chapters', 'chinese']
   },
+  'xiaoyuzhoufm.com': {
+    name: 'Xiaoyuzhou',
+    icon: Radio,
+    color: 'bg-blue-500',
+    description: 'Chinese podcast platform',
+    extractorType: 'selenium',
+    supportedFeatures: ['audio', 'metadata', 'chapters', 'chinese']
+  },
   'bilibili.com': {
     name: 'BiliBili',
     icon: Tv,
@@ -249,14 +257,18 @@ export function detectPlatform(url: string): PlatformInfo | null {
     const urlObj = new URL(url)
     const hostname = urlObj.hostname.replace('www.', '').toLowerCase()
     
+    console.log('🔧 Platform Detection: URL:', url, 'Hostname:', hostname)
+    
     // Direct match
     if (platformPatterns[hostname]) {
+      console.log('🔧 Platform Detection: Direct match found:', platformPatterns[hostname].name)
       return platformPatterns[hostname]
     }
     
     // Partial match for subdomains
     for (const [pattern, info] of Object.entries(platformPatterns)) {
       if (hostname.includes(pattern) || pattern.includes(hostname)) {
+        console.log('🔧 Platform Detection: Partial match found:', info.name, 'pattern:', pattern)
         return info
       }
     }

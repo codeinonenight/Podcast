@@ -1,6 +1,6 @@
 import { UniversalExtractor } from '@/lib/extractors/universal-extractor'
 import { XiaoyuzhouExtractor } from '@/lib/extractors/xiaoyuzhou-extractor'
-import { AzureSpeechService } from '@/lib/transcription/azure-speech'
+import { GeminiTranscriptionService } from '@/lib/transcription/gemini-transcription'
 import { DatabaseService, ProcessingStatus } from '@/lib/database'
 import { PlatformInfo } from '@/lib/platform-detector'
 
@@ -38,6 +38,11 @@ export class AudioProcessingPipeline {
     analyzeContent?: boolean
   } = {}): Promise<PipelineResult> {
     try {
+      // Store URL in global context for mock language detection
+      if (typeof global !== 'undefined') {
+        (global as any).currentProcessingUrl = url
+      }
+      
       // Update initial status
       await DatabaseService.updateProcessingStatus(
         this.sessionId,
@@ -133,10 +138,17 @@ export class AudioProcessingPipeline {
     try {
       let extractor: UniversalExtractor | XiaoyuzhouExtractor
 
-      // Choose extractor based on platform
-      if (platform.name === 'Xiaoyuzhou' || platform.extractorType === 'selenium') {
+      // Choose extractor based on platform and mock setting
+      const USE_MOCK_EXTRACTOR = process.env.USE_MOCK_EXTRACTOR === 'true'
+      
+      if (USE_MOCK_EXTRACTOR) {
+        console.log('🔧 Extraction: Using UniversalExtractor (mock mode) for', platform.name)
+        extractor = new UniversalExtractor()
+      } else if (platform.name === 'Xiaoyuzhou' || platform.extractorType === 'selenium') {
+        console.log('🔧 Extraction: Using XiaoyuzhouExtractor for', platform.name, 'with extractorType:', platform.extractorType)
         extractor = new XiaoyuzhouExtractor()
       } else {
+        console.log('🔧 Extraction: Using UniversalExtractor for', platform.name, 'with extractorType:', platform.extractorType)
         extractor = new UniversalExtractor()
       }
 
@@ -155,11 +167,16 @@ export class AudioProcessingPipeline {
       
       if (result.success && result.audioPath && result.metadata) {
         // Update database with extraction results
+        // Detect audio format from URL or default to the extracted format
+        const audioFormat = result.audioPath?.includes('.m4a') ? 'm4a' : 
+                           result.audioPath?.includes('.mp3') ? 'mp3' :
+                           result.metadata.format || 'mp3'
+        
         await DatabaseService.updatePodcastSession(this.sessionId, {
           audioUrl: result.audioPath,
           audioSize: result.fileSize,
           audioDuration: result.metadata.duration,
-          audioFormat: 'mp3',
+          audioFormat: audioFormat,
           title: result.metadata.title,
           description: result.metadata.description,
           author: result.metadata.author,
@@ -202,25 +219,25 @@ export class AudioProcessingPipeline {
       this.reportProgress({
         stage: 'transcription',
         percentage: 60,
-        currentStep: 'Initializing transcription service'
+        currentStep: 'Initializing Gemini transcription service'
       })
 
-      const speechService = new AzureSpeechService()
+      const transcriptionService = new GeminiTranscriptionService()
       
       // Set up progress callback
-      speechService.setProgressCallback((progress) => {
+      transcriptionService.setProgressCallback((progress) => {
         const percentage = Math.round(60 + (progress.percentage * 0.3)) // 60-90% for transcription
-        let step = 'Transcribing audio'
+        let step = 'Transcribing audio with Gemini'
         
         switch (progress.stage) {
           case 'initializing':
-            step = 'Initializing transcription'
+            step = 'Initializing Gemini transcription'
             break
-          case 'recognizing':
-            step = `Recognizing speech${progress.detectedLanguage ? ` (${progress.detectedLanguage})` : ''}`
+          case 'uploading':
+            step = 'Uploading audio to Gemini'
             break
           case 'processing':
-            step = 'Processing transcription'
+            step = progress.currentText || `Processing with Gemini 2.5 Flash${progress.detectedLanguage ? ` (${progress.detectedLanguage})` : ''}`
             break
           case 'complete':
             step = 'Transcription completed'
@@ -235,7 +252,7 @@ export class AudioProcessingPipeline {
       })
 
       // Transcribe audio
-      const result = await speechService.transcribeAudio(audioPath, language)
+      const result = await transcriptionService.transcribeAudio(audioPath, language)
       
       if (result.success && result.text) {
         // Update database with transcription results
@@ -369,8 +386,14 @@ export class AudioProcessingPipeline {
       // Clean up temporary files
       const session = await DatabaseService.getPodcastSession(this.sessionId)
       if (session?.audioUrl) {
-        // In production, you'd clean up the actual audio file
-        console.log(`Cleaning up audio file: ${session.audioUrl}`)
+        // Only clean up local files, not remote URLs
+        if (session.audioUrl.startsWith('/') || session.audioUrl.startsWith('file://')) {
+          console.log(`Cleaning up local audio file: ${session.audioUrl}`)
+          // In production, you'd actually delete the file here
+          // fs.unlinkSync(session.audioUrl)
+        } else {
+          console.log(`Audio URL is remote, no cleanup needed: ${session.audioUrl}`)
+        }
       }
     } catch (error) {
       console.warn('Cleanup failed:', error)

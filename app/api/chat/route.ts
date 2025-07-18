@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     let currentChatSession
     if (chatSessionId) {
       const chatSessions = session.chatSessions || []
-      currentChatSession = chatSessions.find(cs => cs.id === chatSessionId)
+      currentChatSession = chatSessions.find((cs: any) => cs.id === chatSessionId)
     }
 
     if (!currentChatSession) {
@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
     if (chatSessionId) {
       // Get specific chat session
       const chatSessions = session.chatSessions || []
-      const chatSession = chatSessions.find(cs => cs.id === chatSessionId)
+      const chatSession = chatSessions.find((cs: any) => cs.id === chatSessionId)
       
       if (!chatSession) {
         return NextResponse.json(
@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
       // Get all chat sessions for this podcast session
       return NextResponse.json({
         sessionId: session.id,
-        chatSessions: session.chatSessions?.map(cs => ({
+        chatSessions: session.chatSessions?.map((cs: any) => ({
           id: cs.id,
           createdAt: cs.createdAt,
           updatedAt: cs.updatedAt,
@@ -213,7 +213,7 @@ export async function PUT(request: NextRequest) {
     let currentChatSession
     if (chatSessionId) {
       const chatSessions = session.chatSessions || []
-      currentChatSession = chatSessions.find(cs => cs.id === chatSessionId)
+      currentChatSession = chatSessions.find((cs: any) => cs.id === chatSessionId)
     }
 
     if (!currentChatSession) {

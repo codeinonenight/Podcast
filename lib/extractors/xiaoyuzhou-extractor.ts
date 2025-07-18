@@ -1,7 +1,9 @@
 import { Builder, By, WebDriver, until } from 'selenium-webdriver'
-import { Options as ChromeOptions } from 'selenium-webdriver/chrome'
+import { Options as ChromeOptions, ServiceBuilder } from 'selenium-webdriver/chrome'
 import * as fs from 'fs'
 import * as path from 'path'
+import { spawn } from 'child_process'
+import fetch from 'node-fetch'
 import { AudioMetadata, ExtractionResult, ExtractorProgress } from './universal-extractor'
 
 export class XiaoyuzhouExtractor {
@@ -24,9 +26,12 @@ export class XiaoyuzhouExtractor {
     this.onProgress = callback
   }
 
-  async extractAudio(url: string): Promise<ExtractionResult> {
+  async extractAudio(url: string, platform?: any): Promise<ExtractionResult> {
     try {
+      console.log('🔧 Xiaoyuzhou: Starting extraction for', url)
+      console.log('🔧 Xiaoyuzhou: Initializing WebDriver...')
       await this.initializeDriver()
+      console.log('🔧 Xiaoyuzhou: WebDriver initialized successfully')
       
       if (this.onProgress) {
         this.onProgress({
@@ -35,9 +40,13 @@ export class XiaoyuzhouExtractor {
         })
       }
 
+      console.log('🔧 Xiaoyuzhou: Extracting from Xiaoyuzhou...')
       const result = await this.extractFromXiaoyuzhou(url)
+      console.log('🔧 Xiaoyuzhou: Extraction completed successfully')
       return result
     } catch (error) {
+      console.error('🔧 Xiaoyuzhou: Extraction failed:', error instanceof Error ? error.message : 'Unknown error')
+      console.error('🔧 Xiaoyuzhou: Full error details:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown extraction error'
@@ -48,32 +57,53 @@ export class XiaoyuzhouExtractor {
   }
 
   private async initializeDriver() {
-    const chromeOptions = new ChromeOptions()
-    
-    // Configure Chrome for headless operation
-    chromeOptions.addArguments(
-      '--headless',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-web-security',
-      '--disable-extensions',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--window-size=1920,1080'
-    )
+    try {
+      console.log('🔧 Selenium: Creating Chrome options...')
+      const chromeOptions = new ChromeOptions()
+      
+      // Configure Chrome for headless operation
+      chromeOptions.addArguments(
+        '--headless',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-web-security',
+        '--disable-extensions',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--window-size=1920,1080'
+      )
 
-    // Set Chrome binary path if specified
-    const chromeBinary = process.env.CHROME_BIN || process.env.CHROME_PATH
-    if (chromeBinary) {
+      // Set Chrome binary path if specified
+      const chromeBinary = process.env.CHROME_BIN || process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      console.log('🔧 Selenium: Setting Chrome binary path:', chromeBinary)
       chromeOptions.setChromeBinaryPath(chromeBinary)
-    }
 
-    this.driver = await new Builder()
-      .forBrowser('chrome')
-      .setChromeOptions(chromeOptions)
-      .build()
+      // Set ChromeDriver path explicitly
+      const chromeDriverPath = '/opt/homebrew/bin/chromedriver'
+      
+      console.log('🔧 Selenium: Initializing Chrome with binary:', chromeBinary)
+      console.log('🔧 Selenium: Using ChromeDriver at:', chromeDriverPath)
+
+      // Create a service with explicit ChromeDriver path
+      console.log('🔧 Selenium: Creating ServiceBuilder...')
+      const serviceBuilder = new ServiceBuilder(chromeDriverPath)
+        .enableVerboseLogging()
+
+      console.log('🔧 Selenium: Building WebDriver...')
+      this.driver = await new Builder()
+        .forBrowser('chrome')
+        .setChromeOptions(chromeOptions)
+        .setChromeService(serviceBuilder)
+        .build()
+        
+      console.log('🔧 Selenium: WebDriver initialized successfully')
+    } catch (error) {
+      console.error('🔧 Selenium: Failed to initialize WebDriver:', error instanceof Error ? error.message : 'Unknown error')
+      console.error('🔧 Selenium: Full error details:', error)
+      throw error
+    }
   }
 
   private async extractFromXiaoyuzhou(url: string): Promise<ExtractionResult> {
@@ -112,6 +142,7 @@ export class XiaoyuzhouExtractor {
         throw new Error('Audio source not found')
       }
 
+      // Download the audio file instead of just returning the URL
       if (this.onProgress) {
         this.onProgress({
           stage: 'downloading',
@@ -119,8 +150,11 @@ export class XiaoyuzhouExtractor {
         })
       }
 
-      // Download the audio file
-      const audioPath = await this.downloadAudio(audioUrl, metadata.title || 'xiaoyuzhou_audio')
+      // Generate filename from title or use timestamp as fallback
+      const baseFilename = metadata.title 
+        ? `xiaoyuzhou_${metadata.title.substring(0, 50)}_${Date.now()}`
+        : `xiaoyuzhou_${Date.now()}`
+      const downloadedPath = await this.downloadAudio(audioUrl, baseFilename)
       
       if (this.onProgress) {
         this.onProgress({
@@ -129,11 +163,32 @@ export class XiaoyuzhouExtractor {
         })
       }
 
+      // Get file size of downloaded file
+      const fileSize = fs.existsSync(downloadedPath) ? fs.statSync(downloadedPath).size : 0
+
+      // Get actual audio duration from file if webpage duration wasn't found
+      let actualDuration = metadata.duration || 0
+      if (!actualDuration && fs.existsSync(downloadedPath)) {
+        try {
+          actualDuration = await this.getAudioDuration(downloadedPath)
+        } catch (error) {
+          console.warn('🔧 Xiaoyuzhou: Failed to get audio duration:', error)
+        }
+      }
+
       return {
         success: true,
-        audioPath,
-        metadata,
-        fileSize: fs.statSync(audioPath).size
+        audioPath: downloadedPath, // Return local file path instead of URL
+        metadata: {
+          title: metadata.title || 'Xiaoyuzhou Audio',
+          description: metadata.description || '',
+          author: metadata.author || 'Unknown Author',
+          thumbnail: metadata.thumbnail,
+          duration: actualDuration,
+          webpage_url: await this.driver!.getCurrentUrl()
+        },
+        fileSize: fileSize,
+        duration: actualDuration
       }
     } catch (error) {
       throw new Error(`Xiaoyuzhou extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -148,12 +203,20 @@ export class XiaoyuzhouExtractor {
     const metadata: AudioMetadata = {}
 
     try {
-      // Extract title
+      // Extract title (like reference implementation)
       try {
-        const titleElement = await this.driver.findElement(By.css('h1, .episode-title, .title'))
+        const titleElement = await this.driver.findElement(By.xpath("//h1[contains(@class,'title')]"))
         metadata.title = await titleElement.getText()
+        console.log('🔧 Xiaoyuzhou: Found title:', metadata.title)
       } catch {
-        // Title not found, continue
+        // Try alternative selectors
+        try {
+          const titleElement = await this.driver.findElement(By.css('h1, .episode-title, .title'))
+          metadata.title = await titleElement.getText()
+          console.log('🔧 Xiaoyuzhou: Found title (alternative):', metadata.title)
+        } catch {
+          console.log('🔧 Xiaoyuzhou: Title not found')
+        }
       }
 
       // Extract description
@@ -181,12 +244,36 @@ export class XiaoyuzhouExtractor {
         // Duration not found, continue
       }
 
-      // Extract thumbnail
+      // Extract cover image/thumbnail (specific to Xiaoyuzhou format)
       try {
-        const thumbnailElement = await this.driver.findElement(By.css('img.cover, img.podcast-cover, img.episode-cover'))
-        metadata.thumbnail = await thumbnailElement.getAttribute('src')
+        // Look for the specific Xiaoyuzhou cover image format
+        const coverElement = await this.driver.findElement(By.css('img.avatar, img[class*="avatar"], img[class*="cover"]'))
+        let coverUrl = await coverElement.getAttribute('src')
+        
+        if (coverUrl) {
+          // Remove @small suffix to get larger image if present
+          coverUrl = coverUrl.replace(/@small$/, '')
+          metadata.thumbnail = coverUrl
+          console.log('🔧 Xiaoyuzhou: Found cover image:', coverUrl)
+        }
       } catch {
-        // Thumbnail not found, continue
+        // Try alternative selectors for cover image
+        try {
+          const imgElements = await this.driver.findElements(By.css('img'))
+          for (const img of imgElements) {
+            const src = await img.getAttribute('src')
+            const alt = await img.getAttribute('alt')
+            
+            // Look for images that match episode title or are from CDN
+            if (src && (src.includes('xyzcdn.net') || (alt && metadata.title && alt.includes(metadata.title.substring(0, 20))))) {
+              metadata.thumbnail = src.replace(/@small$/, '')
+              console.log('🔧 Xiaoyuzhou: Found cover image (fallback):', metadata.thumbnail)
+              break
+            }
+          }
+        } catch {
+          console.log('🔧 Xiaoyuzhou: Cover image not found')
+        }
       }
 
       metadata.webpage_url = await this.driver.getCurrentUrl()
@@ -203,97 +290,129 @@ export class XiaoyuzhouExtractor {
     }
 
     try {
-      // Method 1: Look for audio elements
-      try {
-        const audioElements = await this.driver.findElements(By.css('audio'))
-        for (const audio of audioElements) {
-          const src = await audio.getAttribute('src')
-          if (src && src.includes('http')) {
-            return src
+      // Simple method like reference implementation: Find audio element and get src
+      console.log('🔧 Xiaoyuzhou: Looking for audio elements...')
+      const audioElements = await this.driver.findElements(By.css('audio'))
+      
+      if (audioElements.length > 0) {
+        console.log(`🔧 Xiaoyuzhou: Found ${audioElements.length} audio element(s)`)
+        const audioElement = audioElements[0]
+        const audioUrl = await audioElement.getAttribute('src')
+        
+        if (audioUrl) {
+          console.log('🔧 Xiaoyuzhou: Found audio URL:', audioUrl)
+          // Validate the URL
+          if (audioUrl.startsWith('http') || audioUrl.startsWith('https')) {
+            console.log('🔧 Xiaoyuzhou: Audio URL is valid HTTP/HTTPS')
+            return audioUrl
+          } else {
+            console.log('🔧 Xiaoyuzhou: Audio URL is not HTTP/HTTPS, skipping:', audioUrl)
           }
+        } else {
+          console.log('🔧 Xiaoyuzhou: Audio element found but no src attribute')
         }
-      } catch {
-        // Audio elements not found
+      } else {
+        console.log('🔧 Xiaoyuzhou: No audio elements found')
       }
 
-      // Method 2: Look for data attributes containing audio URLs
-      try {
-        const playElements = await this.driver.findElements(By.css('[data-src], [data-audio], [data-url]'))
-        for (const element of playElements) {
-          const dataSrc = await element.getAttribute('data-src') || 
-                         await element.getAttribute('data-audio') || 
-                         await element.getAttribute('data-url')
-          if (dataSrc && (dataSrc.includes('.mp3') || dataSrc.includes('.m4a') || dataSrc.includes('audio'))) {
-            return dataSrc
+      // Fallback: Look for JavaScript-loaded audio sources
+      console.log('🔧 Xiaoyuzhou: Trying JavaScript method...')
+      const audioUrl = await this.driver.executeScript(`
+        // Look for audio elements
+        const audios = document.querySelectorAll('audio');
+        console.log('Found', audios.length, 'audio elements');
+        for (let audio of audios) {
+          console.log('Audio src:', audio.src);
+          if (audio.src && (audio.src.startsWith('http') || audio.src.startsWith('https'))) {
+            return audio.src;
           }
         }
-      } catch {
-        // Data attributes not found
-      }
-
-      // Method 3: Look in page source for audio URLs
-      try {
-        const pageSource = await this.driver.getPageSource()
-        const audioUrlMatch = pageSource.match(/"(https?:\/\/[^"]*\.(?:mp3|m4a|wav)[^"]*)"/)
-        if (audioUrlMatch) {
-          return audioUrlMatch[1]
-        }
-      } catch {
-        // Page source search failed
-      }
-
-      // Method 4: Execute JavaScript to find audio sources
-      try {
-        const audioUrl = await this.driver.executeScript(`
-          // Look for audio elements
-          const audios = document.querySelectorAll('audio');
-          for (let audio of audios) {
-            if (audio.src) return audio.src;
-          }
-          
-          // Look for data attributes
-          const elements = document.querySelectorAll('[data-src], [data-audio], [data-url]');
-          for (let el of elements) {
-            const src = el.dataset.src || el.dataset.audio || el.dataset.url;
-            if (src && (src.includes('.mp3') || src.includes('.m4a'))) {
-              return src;
+        
+        // Look for any elements with audio URLs in attributes
+        const allElements = document.querySelectorAll('*');
+        for (let el of allElements) {
+          for (let attr of el.attributes) {
+            if (attr.value && (attr.value.includes('.mp3') || attr.value.includes('.m4a')) && 
+                (attr.value.startsWith('http') || attr.value.startsWith('https'))) {
+              console.log('Found audio URL in attribute:', attr.name, attr.value);
+              return attr.value;
             }
           }
-          
-          // Look in window object for audio URLs
-          const pageText = document.documentElement.outerHTML;
-          const match = pageText.match(/https?:\\/\\/[^"'\\s]*\\.(?:mp3|m4a)/);
-          return match ? match[0] : null;
-        `)
-        
-        if (audioUrl && typeof audioUrl === 'string') {
-          return audioUrl
         }
-      } catch {
-        // JavaScript execution failed
+        
+        return null;
+      `)
+      
+      if (audioUrl && typeof audioUrl === 'string') {
+        console.log('🔧 Xiaoyuzhou: Found audio URL via JavaScript:', audioUrl)
+        return audioUrl
       }
 
+      console.log('🔧 Xiaoyuzhou: No audio source found')
       return null
     } catch (error) {
-      console.warn('Audio source detection failed:', error)
+      console.error('🔧 Xiaoyuzhou: Audio source detection failed:', error)
       return null
     }
   }
 
   private async downloadAudio(audioUrl: string, filename: string): Promise<string> {
-    const response = await fetch(audioUrl)
-    if (!response.ok) {
-      throw new Error(`Failed to download audio: ${response.statusText}`)
-    }
+    try {
+      console.log('🔧 Xiaoyuzhou: Downloading audio file from', audioUrl)
+      console.log('🔧 Xiaoyuzhou: Using filename:', filename)
+      
+      const response = await fetch(audioUrl)
+      console.log('🔧 Xiaoyuzhou: Response status:', response.status, response.statusText)
+      console.log('🔧 Xiaoyuzhou: Response headers:', Object.fromEntries(response.headers.entries()))
+      
+      if (!response.ok) {
+        throw new Error(`Failed to download audio: ${response.status} ${response.statusText}`)
+      }
 
-    const arrayBuffer = await response.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    
-    const sanitizedFilename = filename.replace(/[^a-zA-Z0-9\-_]/g, '_')
-    const outputPath = path.join(this.tempDir, `${sanitizedFilename}_${Date.now()}.mp3`)
-    
-    fs.writeFileSync(outputPath, buffer)
-    return outputPath
+      // Determine file extension from URL or content type
+      const contentType = response.headers.get('content-type') || ''
+      let extension = '.m4a' // Default for Xiaoyuzhou
+      
+      if (contentType.includes('mp3')) {
+        extension = '.mp3'
+      } else if (contentType.includes('mp4') || contentType.includes('m4a')) {
+        extension = '.m4a'
+      } else if (audioUrl.includes('.mp3')) {
+        extension = '.mp3'
+      } else if (audioUrl.includes('.m4a')) {
+        extension = '.m4a'
+      }
+
+      console.log('🔧 Xiaoyuzhou: Detected extension:', extension)
+      console.log('🔧 Xiaoyuzhou: Content-Type:', contentType)
+
+      const arrayBuffer = await response.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      
+      console.log('🔧 Xiaoyuzhou: Downloaded buffer size:', buffer.length, 'bytes')
+      
+      // More lenient filename sanitization - only replace truly problematic characters
+      const sanitizedFilename = filename.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_')
+      const outputPath = path.join(this.tempDir, `${sanitizedFilename}${extension}`)
+      
+      console.log('🔧 Xiaoyuzhou: Sanitized filename:', sanitizedFilename)
+      console.log('🔧 Xiaoyuzhou: Output path:', outputPath)
+      
+      fs.writeFileSync(outputPath, buffer)
+      console.log('🔧 Xiaoyuzhou: Audio file downloaded successfully to', outputPath)
+      
+      // Verify the file exists and has content
+      if (fs.existsSync(outputPath)) {
+        const stats = fs.statSync(outputPath)
+        console.log('🔧 Xiaoyuzhou: File verification - size:', stats.size, 'bytes')
+        return outputPath
+      } else {
+        throw new Error('File was not created successfully')
+      }
+    } catch (error) {
+      console.error('🔧 Xiaoyuzhou: Download error:', error)
+      throw new Error(`Failed to download audio file: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
   }
 
   private parseDuration(durationText: string): number | undefined {
@@ -313,6 +432,36 @@ export class XiaoyuzhouExtractor {
     }
     
     return undefined
+  }
+
+  private async getAudioDuration(audioPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const ffprobePath = process.env.FFPROBE_PATH || 'ffprobe'
+      const ffprobe = spawn(ffprobePath, [
+        '-v', 'quiet',
+        '-show_entries', 'format=duration',
+        '-of', 'csv=p=0',
+        audioPath
+      ])
+
+      let output = ''
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString()
+      })
+
+      ffprobe.on('close', (code) => {
+        if (code === 0) {
+          const duration = parseFloat(output.trim())
+          resolve(duration || 0)
+        } else {
+          reject(new Error(`FFprobe failed with code ${code}`))
+        }
+      })
+
+      ffprobe.on('error', (error) => {
+        reject(error)
+      })
+    })
   }
 
   async cleanup() {

@@ -18,6 +18,9 @@ dist/
 .env
 .env.local
 .env.development.local
+
+# Mock database file
+.tmp-mock-db.json
 .env.test.local
 .env.production.local
 

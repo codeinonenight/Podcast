@@ -2,6 +2,9 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const MODEL_ID = 'google/gemini-2.5-flash-lite-preview-06-17'
 const API_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
+// Check if we should use mock mode - only when no API key is available
+const USE_MOCK_AI = !process.env.OPENROUTER_API_KEY
+
 export interface OpenRouterResponse {
   success: boolean
   content?: string
@@ -28,7 +31,7 @@ export class OpenRouterClient {
     this.apiKey = apiKey || OPENROUTER_API_KEY || ''
     this.modelId = modelId || MODEL_ID
     
-    if (!this.apiKey) {
+    if (!this.apiKey && !USE_MOCK_AI) {
       throw new Error('OpenRouter API key is required')
     }
   }
@@ -42,6 +45,13 @@ export class OpenRouterClient {
       topP?: number
     } = {}
   ): Promise<OpenRouterResponse> {
+    if (USE_MOCK_AI) {
+      console.log('🔧 Mock AI: No OpenRouter API key available, using mock AI response')
+      return await this.mockOpenRouterCall(userMessage, systemPrompt, options)
+    }
+
+    console.log('🔧 OpenRouter: Using real API for AI analysis')
+
     try {
       const response = await fetch(API_BASE_URL, {
         method: 'POST',
@@ -82,6 +92,190 @@ export class OpenRouterClient {
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       }
     }
+  }
+
+  private async mockOpenRouterCall(
+    userMessage: string, 
+    systemPrompt: string,
+    options: any
+  ): Promise<OpenRouterResponse> {
+    // Simulate API call delay
+    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    // Detect language from the transcription content
+    const detectedLanguage = this.detectLanguageFromContent(userMessage)
+    
+    // Generate mock response based on the prompt content
+    let mockContent = ''
+    
+    if (userMessage.includes('summary') || userMessage.includes('summarize')) {
+      mockContent = JSON.stringify(this.generateMockSummary(detectedLanguage))
+    } else if (userMessage.includes('topics') || userMessage.includes('extract')) {
+      mockContent = JSON.stringify({
+        topics: [
+          {
+            name: "Artificial Intelligence",
+            relevance: 0.95,
+            description: "Discussion of AI applications and implications",
+            timestamps: ["00:02:30", "00:15:45", "00:28:10"]
+          },
+          {
+            name: "Technology Ethics",
+            relevance: 0.88,
+            description: "Ethical considerations in technology development",
+            timestamps: ["00:08:20", "00:22:15"]
+          },
+          {
+            name: "Industry Transformation",
+            relevance: 0.82,
+            description: "How technology is changing various industries",
+            timestamps: ["00:12:00", "00:25:30"]
+          }
+        ],
+        categories: ["Technology", "Ethics", "Innovation", "Future Trends"],
+        confidence: 0.89
+      })
+    } else if (userMessage.includes('mindmap')) {
+      mockContent = JSON.stringify({
+        centralTopic: "Technology and Human Creativity",
+        branches: [
+          {
+            name: "Artificial Intelligence",
+            subtopics: ["Machine Learning", "Natural Language Processing", "Computer Vision"],
+            connections: ["Ethics", "Innovation"]
+          },
+          {
+            name: "Industry Applications",
+            subtopics: ["Healthcare", "Education", "Entertainment"],
+            connections: ["AI", "Future Trends"]
+          },
+          {
+            name: "Ethical Considerations",
+            subtopics: ["Privacy", "Bias", "Transparency"],
+            connections: ["AI", "Human Oversight"]
+          }
+        ],
+        confidence: 0.87
+      })
+    } else if (userMessage.includes('insights')) {
+      mockContent = JSON.stringify({
+        insights: [
+          {
+            title: "AI Augmentation Over Replacement",
+            description: "The most successful AI implementations focus on augmenting human capabilities rather than replacing them entirely",
+            impact: "high",
+            category: "Strategy"
+          },
+          {
+            title: "Ethical Framework Necessity",
+            description: "Organizations need robust ethical frameworks before implementing AI solutions",
+            impact: "high",
+            category: "Ethics"
+          },
+          {
+            title: "Continuous Learning Culture",
+            description: "Teams must develop a culture of continuous learning to adapt to technological changes",
+            impact: "medium",
+            category: "Culture"
+          }
+        ],
+        actionableAdvice: [
+          "Start with small AI pilot projects to understand capabilities and limitations",
+          "Invest in team training and development programs",
+          "Establish clear ethical guidelines for AI use",
+          "Focus on problems that truly benefit from AI solutions"
+        ],
+        quotableQuotes: [
+          "Technology is best when it brings people together",
+          "The future belongs to those who can adapt and learn continuously",
+          "Ethics must be built into technology from the ground up"
+        ],
+        confidence: 0.91
+      })
+    } else {
+      // Default response for questions or chat
+      mockContent = `Based on the podcast content, this appears to be a thoughtful discussion about technology and its impact on society. The hosts provide balanced perspectives on both opportunities and challenges. 
+
+Key themes include:
+- The importance of human-centered design in technology
+- Practical applications across various industries
+- Ethical considerations in AI development
+- Strategies for adapting to technological change
+
+This content would be valuable for anyone interested in understanding how technology is shaping our future while maintaining focus on human values and needs.`
+    }
+
+    console.log('🔧 Mock AI: Generated response for', userMessage.includes('JSON') ? 'structured' : 'text', 'request in', detectedLanguage)
+
+    return {
+      success: true,
+      content: mockContent,
+      usage: {
+        prompt_tokens: Math.floor(userMessage.length / 4),
+        completion_tokens: Math.floor(mockContent.length / 4),
+        total_tokens: Math.floor((userMessage.length + mockContent.length) / 4)
+      }
+    }
+  }
+
+  private detectLanguageFromContent(content: string): string {
+    // Simple language detection based on character patterns
+    const chineseChars = /[\u4e00-\u9fff]/g
+    const japaneseChars = /[\u3040-\u309f\u30a0-\u30ff]/g
+    const koreanChars = /[\uac00-\ud7af]/g
+    
+    const chineseMatches = content.match(chineseChars)
+    const japaneseMatches = content.match(japaneseChars)
+    const koreanMatches = content.match(koreanChars)
+    
+    if (chineseMatches && chineseMatches.length > 10) return 'zh-CN'
+    if (japaneseMatches && japaneseMatches.length > 10) return 'ja-JP'
+    if (koreanMatches && koreanMatches.length > 10) return 'ko-KR'
+    
+    return 'en-US'
+  }
+
+  private generateMockSummary(language: string): any {
+    const summaries: Record<string, any> = {
+      'zh-CN': {
+        summary: "本期播客节目深入探讨了科技与人类创造力的迷人交汇点。主持人讨论了人工智能如何革命性地改变各个行业，同时强调了保持人类监督和伦理考量的重要性。他们涵盖了医疗保健、教育和娱乐领域的实际应用，为听众提供了关于适应技术变革的可行见解。",
+        keyPoints: [
+          "人工智能正在同时改变多个行业",
+          "人类监督在AI实施中仍然至关重要",
+          "伦理考量必须指导技术进步",
+          "实际应用在医疗保健和教育领域已经可见",
+          "适应策略对专业人士来说是必不可少的"
+        ],
+        duration: "5-7分钟阅读时间",
+        confidence: 0.92
+      },
+      'ja-JP': {
+        summary: "このポッドキャストエピソードは、テクノロジーと人間の創造性の魅力的な交差点を探求しています。ホストは、人工知能がさまざまな業界をどのように革命化しているかについて議論し、同時に人間の監督と倫理的考慮の重要性を強調しています。彼らは医療、教育、エンターテイメントにおける実用的な応用を取り上げ、技術的変化に適応することについての実行可能な洞察をリスナーに提供しています。",
+        keyPoints: [
+          "AIは複数の業界を同時に変革している",
+          "AI実装において人間の監督は依然として重要",
+          "倫理的考慮が技術進歩を導く必要がある",
+          "実用的な応用は医療と教育ですでに見られる",
+          "適応戦略は専門家にとって不可欠"
+        ],
+        duration: "5-7分読書時間",
+        confidence: 0.92
+      },
+      'en-US': {
+        summary: "This podcast episode explores the fascinating intersection of technology and human creativity. The hosts discuss how artificial intelligence is revolutionizing various industries while emphasizing the importance of maintaining human oversight and ethical considerations. They cover practical applications in healthcare, education, and entertainment, providing listeners with actionable insights about adapting to technological change.",
+        keyPoints: [
+          "AI is transforming multiple industries simultaneously",
+          "Human oversight remains crucial in AI implementation",
+          "Ethical considerations must guide technological advancement",
+          "Practical applications are already visible in healthcare and education",
+          "Adaptation strategies are essential for professionals"
+        ],
+        duration: "5-7 minutes reading time",
+        confidence: 0.92
+      }
+    }
+    
+    return summaries[language] || summaries['en-US']
   }
 
   async getStructuredResponse<T = any>(

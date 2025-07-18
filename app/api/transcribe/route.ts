@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { AzureSpeechService } from '@/lib/transcription/azure-speech'
 import { DatabaseService, ProcessingStatus } from '@/lib/database'
+
+// Track active transcriptions for cancellation
+const activeTranscriptions = new Map<string, boolean>()
+const activeTranscriptionServices = new Map<string, any>()
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,29 +17,56 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get the session
+    // Get the session to check if extraction is complete
     const session = await DatabaseService.getPodcastSession(sessionId)
     if (!session) {
+      // Debug: check what sessions exist
+      const mockData = DatabaseService.getMockData()
+      console.error('🔧 Transcribe: Session not found. Available sessions:', 
+        mockData?.podcastSessions.map(s => ({ id: s.id, status: s.status })) || 'none')
+      
       return NextResponse.json(
-        { error: 'Session not found' },
+        { error: `Session not found: ${sessionId}` },
         { status: 404 }
       )
     }
 
-    if (!session.audioUrl) {
+    // Check if extraction is complete and audio is available
+    if (session.status !== ProcessingStatus.COMPLETED || !session.audioUrl) {
+      console.error('🔧 Transcribe: Session status check failed', {
+        sessionId,
+        status: session.status,
+        hasAudioUrl: !!session.audioUrl,
+        expectedStatus: ProcessingStatus.COMPLETED
+      })
+      
       return NextResponse.json(
-        { error: 'Audio not available for transcription' },
+        { error: `Audio extraction must be completed first. Current status: ${session.status}` },
         { status: 400 }
       )
     }
 
+    // Check if already transcribed (but allow re-transcription)
+    if (session.transcription) {
+      console.log('🔧 Transcribe: Session already transcribed, allowing re-transcription')
+      // Clear existing transcription data for re-transcription
+      await DatabaseService.updatePodcastSession(sessionId, {
+        transcription: null,
+        transcriptionLanguage: null,
+        transcriptionConfidence: null
+      })
+    }
+
+    // Mark as active transcription
+    activeTranscriptions.set(sessionId, true)
+    
     // Start transcription in background
     transcribeAudioAsync(sessionId, session.audioUrl, language).catch(console.error)
 
     return NextResponse.json({
-      message: 'Transcription started',
       sessionId: sessionId,
-      status: 'TRANSCRIBING'
+      status: 'TRANSCRIBING',
+      message: 'Transcription started'
     })
   } catch (error) {
     console.error('Transcribe API error:', error)
@@ -49,20 +79,36 @@ export async function POST(request: NextRequest) {
 
 async function transcribeAudioAsync(sessionId: string, audioPath: string, language?: string) {
   try {
+    // Check if cancelled before starting
+    if (!activeTranscriptions.get(sessionId)) {
+      console.log('🔧 Transcribe: Transcription cancelled before starting')
+      return
+    }
+    
     // Update status to transcribing
     await DatabaseService.updateProcessingStatus(
       sessionId,
       ProcessingStatus.TRANSCRIBING,
-      5,
-      'Initializing transcription service'
+      0,
+      'Starting transcription'
     )
 
-    // Initialize Azure Speech Service
-    const speechService = new AzureSpeechService()
+    // Import Gemini Transcription Service
+    const { GeminiTranscriptionService } = await import('@/lib/transcription/gemini-transcription')
+    const transcriptionService = new GeminiTranscriptionService()
+    
+    // Store service instance for cancellation
+    activeTranscriptionServices.set(sessionId, transcriptionService)
     
     // Set up progress callback
-    speechService.setProgressCallback(async (progress) => {
-      const percentage = Math.round(5 + (progress.percentage * 0.85)) // 5-90% range
+    transcriptionService.setProgressCallback(async (progress) => {
+      // Check if cancelled during progress updates
+      if (!activeTranscriptions.get(sessionId)) {
+        console.log('🔧 Transcribe: Transcription cancelled during progress update')
+        return
+      }
+      
+      const percentage = Math.round(progress.percentage * 0.9) // 0-90% range
       let step = 'Transcribing audio'
       
       switch (progress.stage) {
@@ -89,7 +135,13 @@ async function transcribeAudioAsync(sessionId: string, audioPath: string, langua
     })
 
     // Transcribe audio
-    const result = await speechService.transcribeAudio(audioPath, language)
+    const result = await transcriptionService.transcribeAudio(audioPath, language)
+    
+    // Check if cancelled after transcription
+    if (!activeTranscriptions.get(sessionId)) {
+      console.log('🔧 Transcribe: Transcription cancelled after completion')
+      return
+    }
     
     if (result.success && result.text) {
       // Update session with transcription data
@@ -112,7 +164,7 @@ async function transcribeAudioAsync(sessionId: string, audioPath: string, langua
       )
     }
   } catch (error) {
-    console.error('Transcription processing error:', error)
+    console.error('Transcription error:', error)
     
     await DatabaseService.updateProcessingStatus(
       sessionId,
@@ -121,6 +173,10 @@ async function transcribeAudioAsync(sessionId: string, audioPath: string, langua
       'Transcription failed',
       error instanceof Error ? error.message : 'Unknown error'
     )
+  } finally {
+    // Clean up active transcription tracking
+    activeTranscriptions.delete(sessionId)
+    activeTranscriptionServices.delete(sessionId)
   }
 }
 
@@ -158,7 +214,8 @@ export async function GET(request: NextRequest) {
         description: session.description,
         author: session.author,
         duration: session.duration,
-        thumbnail: session.thumbnail
+        thumbnail: session.thumbnail,
+        publishDate: session.publishDate
       } : null
     })
   } catch (error) {
@@ -170,9 +227,65 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// Cancel transcription
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const sessionId = searchParams.get('sessionId')
+    
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'Session ID is required' },
+        { status: 400 }
+      )
+    }
+
+    // Cancel the transcription
+    if (activeTranscriptions.has(sessionId)) {
+      activeTranscriptions.delete(sessionId)
+      
+      // Cancel the transcription service if it exists
+      const transcriptionService = activeTranscriptionServices.get(sessionId)
+      if (transcriptionService) {
+        transcriptionService.cancel()
+        activeTranscriptionServices.delete(sessionId)
+      }
+      
+      // Update database to reflect cancellation
+      await DatabaseService.updateProcessingStatus(
+        sessionId,
+        ProcessingStatus.COMPLETED, // Set back to completed (after extraction)
+        60,
+        'Transcription cancelled'
+      )
+      
+      console.log('🔧 Transcribe: Transcription cancelled for session', sessionId)
+      
+      return NextResponse.json({
+        sessionId: sessionId,
+        status: 'CANCELLED',
+        message: 'Transcription cancelled successfully'
+      })
+    } else {
+      return NextResponse.json(
+        { error: 'No active transcription found for this session' },
+        { status: 404 }
+      )
+    }
+  } catch (error) {
+    console.error('Cancel transcription error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
 // Get supported languages
 export async function OPTIONS() {
+  const { GeminiTranscriptionService } = await import('@/lib/transcription/gemini-transcription')
   return NextResponse.json({
-    supportedLanguages: AzureSpeechService.getSupportedLanguages()
+    supportedLanguages: GeminiTranscriptionService.getSupportedLanguages(),
+    capabilities: GeminiTranscriptionService.getCapabilities()
   })
 } 

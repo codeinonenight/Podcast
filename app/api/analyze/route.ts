@@ -30,6 +30,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Check if already analyzed (but allow re-analysis)
+    if (session.summary || session.topics || session.mindmap || session.insights) {
+      console.log('🔧 Analyze: Session already analyzed, allowing re-analysis')
+      // Clear existing analysis data for re-analysis
+      await DatabaseService.updatePodcastSession(sessionId, {
+        summary: null,
+        topics: null,
+        mindmap: null,
+        insights: null
+      })
+    }
+
     // Start analysis in background
     analyzeContentAsync(sessionId, session.transcription, {
       title: session.title,

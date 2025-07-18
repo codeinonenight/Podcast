@@ -30,8 +30,8 @@ export async function POST(request: NextRequest) {
       platform: platform.name
     })
 
-    // Start processing in background
-    processAudioAsync(session.id, url, platform).catch(console.error)
+    // Start extraction only (no auto-transcription)
+    extractAudioAsync(session.id, url, platform).catch(console.error)
 
     return NextResponse.json({
       sessionId: session.id,
@@ -47,12 +47,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processAudioAsync(sessionId: string, url: string, platform: any) {
+async function extractAudioAsync(sessionId: string, url: string, platform: any) {
   try {
-    // Use the integrated pipeline for processing
+    // Use the integrated pipeline for extraction only
     const result = await processAudioPipeline(sessionId, url, platform, {
-      transcribeAudio: true,
-      analyzeContent: false
+      transcribeAudio: false,  // Don't auto-transcribe
+      analyzeContent: false    // Don't auto-analyze
     })
 
     if (!result.success) {
@@ -60,18 +60,18 @@ async function processAudioAsync(sessionId: string, url: string, platform: any) 
         sessionId,
         ProcessingStatus.FAILED,
         0,
-        'Processing failed',
+        'Extraction failed',
         result.error
       )
     }
   } catch (error) {
-    console.error('Audio processing error:', error)
+    console.error('Audio extraction error:', error)
     
     await DatabaseService.updateProcessingStatus(
       sessionId,
       ProcessingStatus.FAILED,
       0,
-      'Processing failed',
+      'Extraction failed',
       error instanceof Error ? error.message : 'Unknown error'
     )
   }
@@ -107,6 +107,9 @@ export async function GET(request: NextRequest) {
       error: session.error,
       platform: session.platform,
       originalUrl: session.originalUrl,
+      audioUrl: session.audioUrl,
+      audioSize: session.audioSize,
+      audioFormat: session.audioFormat,
       metadata: session.title ? {
         title: session.title,
         description: session.description,
@@ -114,7 +117,14 @@ export async function GET(request: NextRequest) {
         duration: session.duration,
         thumbnail: session.thumbnail,
         publishDate: session.publishDate
-      } : null
+      } : null,
+      transcription: session.transcription,
+      transcriptionLanguage: session.transcriptionLanguage,
+      transcriptionConfidence: session.transcriptionConfidence,
+      summary: session.summary,
+      topics: session.topics,
+      mindmap: session.mindmap,
+      insights: session.insights
     })
   } catch (error) {
     console.error('Get session error:', error)

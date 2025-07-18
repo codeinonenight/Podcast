@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -20,7 +20,7 @@ model PodcastSession {
   platform    String
   
   // Processing status
-  status      ProcessingStatus @default(PENDING)
+  status      String @default("PENDING")
   currentStep String?
   progress    Int              @default(0)
   error       String?
@@ -38,7 +38,7 @@ model PodcastSession {
   publishDate DateTime?
   thumbnail   String?
   duration    Float?
-  chapters    Json?
+  chapters    String?
   
   // Analysis results
   transcription String?
@@ -46,9 +46,9 @@ model PodcastSession {
   transcriptionConfidence Float?
   
   summary     String?
-  topics      Json?
-  mindmap     Json?
-  insights    Json?
+  topics      String?
+  mindmap     String?
+  insights    String?
   
   // Chat sessions
   chatSessions ChatSession[]
@@ -64,19 +64,19 @@ model ChatSession {
   podcastSessionId String
   podcastSession   PodcastSession @relation(fields: [podcastSessionId], references: [id], onDelete: Cascade)
   
-  messages Json[]
+  messages String?
   
   @@map("chat_sessions")
 }
 
-enum ProcessingStatus {
-  PENDING
-  EXTRACTING_AUDIO
-  TRANSCRIBING
-  ANALYZING
-  COMPLETED
-  FAILED
-}
+// enum ProcessingStatus {
+//   PENDING
+//   EXTRACTING_AUDIO
+//   TRANSCRIBING
+//   ANALYZING
+//   COMPLETED
+//   FAILED
+// }
 
 model ProcessingJob {
   id          String   @id @default(cuid())
@@ -84,7 +84,7 @@ model ProcessingJob {
   updatedAt   DateTime @updatedAt
   
   sessionId   String   @unique
-  status      ProcessingStatus @default(PENDING)
+  status      String @default("PENDING")
   currentStep String?
   progress    Int      @default(0)
   error       String?
