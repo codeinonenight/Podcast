@@ -60,6 +60,7 @@
     "@types/selenium-webdriver": "^4.1.28",
     "@types/validator": "^13.11.8",
     "autoprefixer": "^10.0.1",
+    "chromedriver": "^138.0.4",
     "eslint": "^8",
     "eslint-config-next": "14.0.4",
     "postcss": "^8",

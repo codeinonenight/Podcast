@@ -1,18 +1,21 @@
 import { Builder, By, WebDriver, until } from 'selenium-webdriver'
 import { Options as ChromeOptions, ServiceBuilder } from 'selenium-webdriver/chrome'
+import { Options as EdgeOptions, ServiceBuilder as EdgeServiceBuilder } from 'selenium-webdriver/edge'
 import * as fs from 'fs'
 import * as path from 'path'
 import { spawn } from 'child_process'
 import fetch from 'node-fetch'
 import { AudioMetadata, ExtractionResult, ExtractorProgress } from './universal-extractor'
+import { SystemDetector } from '../platform-detector'
 
 export class XiaoyuzhouExtractor {
   private driver?: WebDriver
   private tempDir: string
   private onProgress?: (progress: ExtractorProgress) => void
+  private systemPaths = SystemDetector.getSystemPaths()
 
-  constructor(tempDir: string = '/tmp/audio_processing') {
-    this.tempDir = tempDir
+  constructor(tempDir?: string) {
+    this.tempDir = tempDir || SystemDetector.ensureTempDir()
     this.ensureTempDir()
   }
 
@@ -58,51 +61,100 @@ export class XiaoyuzhouExtractor {
 
   private async initializeDriver() {
     try {
-      console.log('🔧 Selenium: Creating Chrome options...')
-      const chromeOptions = new ChromeOptions()
+      console.log('🔧 Selenium: Detecting browser and initializing driver...')
       
-      // Configure Chrome for headless operation
-      chromeOptions.addArguments(
-        '--headless',
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-web-security',
-        '--disable-extensions',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--window-size=1920,1080'
-      )
-
-      // Set Chrome binary path if specified
-      const chromeBinary = process.env.CHROME_BIN || process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-      console.log('🔧 Selenium: Setting Chrome binary path:', chromeBinary)
-      chromeOptions.setChromeBinaryPath(chromeBinary)
-
-      // Set ChromeDriver path explicitly
-      const chromeDriverPath = '/opt/homebrew/bin/chromedriver'
+      // 检测浏览器类型
+      const browserPath = this.systemPaths.chrome
+      const isEdge = browserPath.includes('msedge.exe') || browserPath.includes('edge')
       
-      console.log('🔧 Selenium: Initializing Chrome with binary:', chromeBinary)
-      console.log('🔧 Selenium: Using ChromeDriver at:', chromeDriverPath)
+      if (isEdge) {
+        console.log('🔧 Selenium: Using Microsoft Edge browser')
+        await this.initializeEdgeDriver(browserPath)
+      } else {
+        console.log('🔧 Selenium: Using Chrome browser')
+        await this.initializeChromeDriver(browserPath)
+      }
+      
+      console.log('✅ Selenium: WebDriver initialized successfully')
+    } catch (error) {
+      console.error('❌ Selenium: Driver initialization failed:', error instanceof Error ? error.message : 'Unknown error')
+      throw error
+    }
+  }
 
-      // Create a service with explicit ChromeDriver path
-      console.log('🔧 Selenium: Creating ServiceBuilder...')
+  private async initializeChromeDriver(browserPath: string) {
+    const chromeOptions = new ChromeOptions()
+    
+    // Configure Chrome for headless operation
+    chromeOptions.addArguments(
+      '--headless',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-extensions',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--window-size=1920,1080'
+    )
+
+    chromeOptions.setChromeBinaryPath(browserPath)
+
+    // Try automatic ChromeDriver first, then explicit path
+    try {
+      console.log('🔧 Selenium: Attempting automatic ChromeDriver detection...')
+      this.driver = await new Builder()
+        .forBrowser('chrome')
+        .setChromeOptions(chromeOptions)
+        .build()
+      console.log('✅ Selenium: Chrome WebDriver created with automatic detection')
+    } catch (autoError) {
+      console.log('⚠️ Selenium: Automatic ChromeDriver failed, trying explicit path...')
+      
+      const chromeDriverPath = this.systemPaths.chromedriver
       const serviceBuilder = new ServiceBuilder(chromeDriverPath)
         .enableVerboseLogging()
 
-      console.log('🔧 Selenium: Building WebDriver...')
       this.driver = await new Builder()
         .forBrowser('chrome')
         .setChromeOptions(chromeOptions)
         .setChromeService(serviceBuilder)
         .build()
-        
-      console.log('🔧 Selenium: WebDriver initialized successfully')
-    } catch (error) {
-      console.error('🔧 Selenium: Failed to initialize WebDriver:', error instanceof Error ? error.message : 'Unknown error')
-      console.error('🔧 Selenium: Full error details:', error)
-      throw error
+      console.log('✅ Selenium: Chrome WebDriver created with explicit path')
+    }
+  }
+
+  private async initializeEdgeDriver(browserPath: string) {
+    const edgeOptions = new EdgeOptions()
+    
+    // Configure Edge for headless operation
+    edgeOptions.addArguments(
+      '--headless',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-extensions',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--window-size=1920,1080'
+    )
+
+    edgeOptions.setEdgeChromiumBinaryPath(browserPath)
+
+    try {
+      console.log('🔧 Selenium: Attempting automatic Edge WebDriver...')
+      this.driver = await new Builder()
+        .forBrowser('MicrosoftEdge')
+        .setEdgeOptions(edgeOptions)
+        .build()
+      console.log('✅ Selenium: Edge WebDriver created successfully')
+    } catch (edgeError) {
+      const errorMsg = edgeError instanceof Error ? edgeError.message : String(edgeError)
+      console.error('❌ Selenium: Edge WebDriver failed:', errorMsg)
+      throw new Error(`Edge WebDriver setup failed: ${errorMsg}`)
     }
   }
 

@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
-import { PlatformInfo } from '../platform-detector'
+import { PlatformInfo, SystemDetector } from '../platform-detector'
 
 export interface ExtractorProgress {
   stage: 'downloading' | 'extracting' | 'converting' | 'complete'
@@ -46,9 +46,10 @@ console.log('🔧 Universal Extractor: USE_MOCK_EXTRACTOR =', USE_MOCK_EXTRACTOR
 export class UniversalExtractor {
   private tempDir: string
   private onProgress?: (progress: ExtractorProgress) => void
+  private systemPaths = SystemDetector.getSystemPaths()
 
-  constructor(tempDir: string = '/tmp/audio_processing') {
-    this.tempDir = tempDir
+  constructor(tempDir?: string) {
+    this.tempDir = tempDir || SystemDetector.ensureTempDir()
     this.ensureTempDir()
   }
 

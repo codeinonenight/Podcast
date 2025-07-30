@@ -1,4 +1,7 @@
 import { Globe, Video, Music, Mic, Radio, Tv, Headphones, PlayCircle } from 'lucide-react'
+import * as os from 'os'
+import * as path from 'path'
+import * as fs from 'fs'
 
 export interface PlatformInfo {
   name: string
@@ -7,6 +10,136 @@ export interface PlatformInfo {
   description: string
   extractorType: 'yt-dlp' | 'selenium' | 'api' | 'rss'
   supportedFeatures: string[]
+}
+
+export interface SystemPaths {
+  python: string
+  ffmpeg: string
+  ffprobe: string
+  ytdlp: string
+  chrome: string
+  chromedriver: string
+  tempDir: string
+}
+
+// 系统平台检测和路径配置
+export class SystemDetector {
+  static getPlatform(): 'windows' | 'macos' | 'linux' {
+    const platform = os.platform()
+    if (platform === 'win32') return 'windows'
+    if (platform === 'darwin') return 'macos'
+    return 'linux'
+  }
+
+  static getDefaultPaths(): SystemPaths {
+    const platform = this.getPlatform()
+    
+    switch (platform) {
+      case 'windows':
+        const chromeOrEdge = this.findChromeInstallation() || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+        return {
+          python: 'python',
+          ffmpeg: 'ffmpeg',
+          ffprobe: 'ffprobe',
+          ytdlp: 'yt-dlp',
+          chrome: chromeOrEdge,
+          chromedriver: path.join(process.cwd(), 'node_modules', 'chromedriver', 'lib', 'chromedriver', 'chromedriver.exe'),
+          tempDir: path.join(os.tmpdir(), 'audio_processing')
+        }
+      
+      case 'macos':
+        return {
+          python: '/usr/bin/python3',
+          ffmpeg: '/opt/homebrew/bin/ffmpeg',
+          ffprobe: '/opt/homebrew/bin/ffprobe',
+          ytdlp: '/opt/homebrew/bin/yt-dlp',
+          chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          chromedriver: path.join(process.cwd(), 'node_modules', 'chromedriver', 'lib', 'chromedriver', 'chromedriver'),
+          tempDir: '/tmp/audio_processing'
+        }
+      
+      default: // linux
+        return {
+          python: '/usr/bin/python3',
+          ffmpeg: '/usr/bin/ffmpeg',
+          ffprobe: '/usr/bin/ffprobe',
+          ytdlp: '/usr/bin/yt-dlp',
+          chrome: '/usr/bin/chromium-browser',
+          chromedriver: path.join(process.cwd(), 'node_modules', 'chromedriver', 'lib', 'chromedriver', 'chromedriver'),
+          tempDir: '/tmp/audio_processing'
+        }
+    }
+  }
+
+  static getSystemPaths(): SystemPaths {
+    const defaultPaths = this.getDefaultPaths()
+    
+    return {
+      python: process.env.PYTHON_PATH || defaultPaths.python,
+      ffmpeg: process.env.FFMPEG_PATH || defaultPaths.ffmpeg,
+      ffprobe: process.env.FFPROBE_PATH || defaultPaths.ffprobe,
+      ytdlp: process.env.YTDLP_PATH || defaultPaths.ytdlp,
+      chrome: process.env.CHROME_BIN || process.env.CHROME_PATH || defaultPaths.chrome,
+      chromedriver: defaultPaths.chromedriver,
+      tempDir: process.env.TEMP_DIR || defaultPaths.tempDir
+    }
+  }
+
+  static checkToolAvailability(toolPath: string): boolean {
+    try {
+      // 对于不是绝对路径的工具（在PATH中的），我们假设它们可用
+      if (!path.isAbsolute(toolPath)) {
+        return true
+      }
+      return fs.existsSync(toolPath)
+    } catch {
+      return false
+    }
+  }
+
+  static findChromeInstallation(): string | null {
+    const platform = this.getPlatform()
+    
+    if (platform === 'windows') {
+      const possiblePaths = [
+        // Chrome路径
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        // Edge路径 (作为Chrome的替代)
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        path.join(process.env.PROGRAMFILES || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+      ]
+      
+      for (const browserPath of possiblePaths) {
+        if (fs.existsSync(browserPath)) {
+          console.log(`🔍 Browser found: ${browserPath}`)
+          return browserPath
+        }
+      }
+    }
+    
+    return null
+  }
+
+  static ensureTempDir(tempDir?: string): string {
+    const dir = tempDir || this.getSystemPaths().tempDir
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      return dir
+    } catch (error) {
+      console.warn(`Failed to create temp directory ${dir}:`, error)
+      // 回退到系统临时目录
+      const fallbackDir = path.join(os.tmpdir(), 'podcast_analyzer')
+      if (!fs.existsSync(fallbackDir)) {
+        fs.mkdirSync(fallbackDir, { recursive: true })
+      }
+      return fallbackDir
+    }
+  }
 }
 
 const platformPatterns: { [key: string]: PlatformInfo } = {
